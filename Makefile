@@ -4,12 +4,12 @@ CCFLAGS+=-g
 CCFLAGS+=-O3
 LDFLAGS=-lm 
 
-
+OBJECTS=lib/bfio.o \
 
 all: fse
 
 fse: fse.c 
-	$(GPP) $(CCFLAGS)  $^ -o $@ $(LDFLAGS)
+	$(GPP) $(CCFLAGS) $(OBJECTS) $^ -o $@ $(LDFLAGS)
 
 clean: fse 
 	rm fse

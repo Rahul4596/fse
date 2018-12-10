@@ -7,6 +7,7 @@
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
+#include "lib/bfio.h"
 
 
 
@@ -315,16 +316,36 @@ void init_image_quantised(long** quantised,
 struct symbolTransform
 {
 	unsigned dstate;
-	long dnBits;
+	unsigned dBits;
 };
 
 
 /*--------------------------------------------------------------------------*/
+void write_long_bitwise(long c, /* (positive) number to write */
+                        long n, /* number of bits */
+                        BFILE* output_file) /* 0 no output,
+                                               otherwise write to binary file */
+{
+  
+  while(n>0)
+  {
+    /*set_bit(output_file,(c>>(n-1))&1);
+    printf("b=%ld  " , (c>>(n-1))&1);
+  	n--;*/
+  	set_bit(output_file,c%2);
+  	//printf("b=%ld ", c%2);
+  	c/=2;
+  	n--;
+  }
+  return;
+}
+
+/*--------------------------------------------------------------------------*/
 
 
 
 /*--------------------------------------------------------------------------*/
-void compress_image(char* input_filename, FILE* output_file, long q) {
+void compress_image(char* input_filename, BFILE* output_file, long q, unsigned* norm_count, unsigned* finalState) {
 
 long *qmap_small = 0;
 long *qmap = 0;
@@ -350,16 +371,19 @@ read_pgm_and_allocate_memory(input_filename, &nx, &ny, &image);
   }
   alloc_vector_int(&in_buff,(nx*ny));
  //long minSize=5,maxSize=15;
- printf("here \n");
+ 
 //converting 2D to 1D
  long k=0;
  	for(i=1;i<=nx;i++)
  		for(j=1;j<=ny;j++)
  			{
- 				in_buff[k]=image[i][j];
+ 				in_buff[(i-1)+(j-1)*nx]=image[i][j];
+ 				//printf("(%ld,%ld)->%ld \n ", i,j, image[i][j]);
  				k++;
  			}
  	long srcSize=nx*ny;
+
+ 	//printf("here %ld \n", in_buff[k-1]);
 //finding optimal value of tableLog
  	//minTableLog should be chosen from minBitsSrc and minBitsSymbols, as the source size > no.of symbols
  	// skip the computation and chose minBitsSrc as minBits, but 11>log(255)+2, and maxBitsSrc>11, we choose 11 as default tableLog
@@ -367,9 +391,10 @@ read_pgm_and_allocate_memory(input_filename, &nx, &ny, &image);
  	// the computations and just choose 11  (refer fse_compress -> optimalTableLog)
 
 
-long *count,*norm_count,total=0,total_norm=0,max=0,tableSize=2048,maxValue=256,tableLog=log2(tableSize);
+long *count,total=0,total_norm=0,max=0,tableSize=2048,maxValue=256,tableLog=log2(tableSize);
 alloc_vector_int(&count,256);
-alloc_vector_int(&norm_count,256);
+unsigned temp_norm[maxValue];
+//alloc_vector_int(&norm_count,256);
 for(i=0;i<maxValue;i++)
 	count[i]=0;
 for(i=0;i<srcSize;i++)
@@ -377,7 +402,7 @@ for(i=0;i<srcSize;i++)
 for(i=0;i<maxValue;i++)
 {
 	total+=count[i];
-	printf("\n %ld -> %ld ", i, count[i]);
+	//printf("\n %ld -> %ld ", i, count[i]);
 }
 double t;
 for(i=0;i<maxValue;i++)
@@ -391,14 +416,48 @@ for(i=0;i<maxValue;i++)
 		max=i;
 
 }
+/*norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
+
+total_norm=0;
+for(i=0;i<maxValue;i++)
+{
+	printf("\n %ld -> %ld ", i, norm_count[i]);
+  temp_norm[i]=norm_count[i];
+	total_norm+=norm_count[i];
+}*/
+
+
+////////////////////////////////////
+/*norm_count[20]++;
+norm_count[36]--;
+norm_count[44]--;
+norm_count[52]--;
+norm_count[92]--;
+//norm_count[100]=181;
+norm_count[124]--;
+norm_count[140]--;
+norm_count[172]--;
+norm_count[180]--;
+norm_count[204]--;
+norm_count[220]--;
+norm_count[252]--;
+total_norm-=10;*/
+
+///////////////////////////////////
+
 norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
 
 total_norm=0;
 for(i=0;i<maxValue;i++)
 {
-	printf("\n %ld -> %ld ", count[i], norm_count[i]);
-	total_norm+=norm_count[i];
+  if(count[i])
+  printf("\n %ld -> %ld ", count[i], norm_count[i]);
+  temp_norm[i]=norm_count[i];
+  total_norm+=norm_count[i];
 }
+
+///////////////////////////////////////////////////////////
+
 printf("\n M=%ld N=%ld", total_norm,total);
 
 //************building the table****************
@@ -412,19 +471,25 @@ for(i=1;i<maxValue;i++)
 cumul[maxValue]=tableSize+1;
 
 
-printf("symbol start positions \n");
-    for(i=0;i<=maxValue;i++)
-    	printf("%lu ",cumul[i]);
+//printf("symbol start positions \n");
+//    for(i=0;i<=maxValue;i++)
+//    	printf("%lu ",cumul[i]);
 
 
 
  	
-//#define FSE_TABLESTEP(tableSize) ((tableSize>>1) + (tableSize>>3) + 3) in original code
-   // used to define the step size to distribute symbols given the table size. Have no idea why???
+   // used to define the step size to distribute symbols given the table size. 
+    //Have some idea now. As symbols should be spread as far as possible from each other
+    //ie (0,1/2,1/4,3/4,....), any sequence with step size n/2+n/4+n/8+...+odd_number
+    // will approimate this distribution. Also, as the step size and n value are coprime
+    // all states will be visited exactly once.
+
+ //#define FSE_TABLESTEP(tableSize) ((tableSize>>1) + (tableSize>>3) + 3) in original code
 //substitute 11 and get step=1283
 //now, we distribute the symbols
-long *tableSymbol,step, pos=0;
+long step, pos=0;
 step=(tableSize/2)+(tableSize/8)+3;
+long *tableSymbol;
 alloc_vector_int(&tableSymbol,tableSize);
 for(i=0;i<256;i++) //iterating over symbols
 {
@@ -435,8 +500,69 @@ for(i=0;i<256;i++) //iterating over symbols
 	}
  }
 
- for(i=0;i<2048;i++)
-    	printf("\n %ld -> %ld",i,tableSymbol[i] );
+
+ 
+ /*for(i=0;i<tableSize;i++)
+  {
+    unsigned sym=tableSymbol[i];
+    
+    unsigned nextState= temp_norm[sym]++;
+    unsigned nBits = (unsigned)(tableLog - log2(nextState)+1);
+    if(nBits>tableLog)
+      nBits=tableLog;
+    //if(i==357)
+    //  decode_table[i].nBits--;
+    unsigned newState=(unsigned)((nextState<< nBits) - tableSize);
+    if(newState==tableSize)
+    {
+      /*if(temp_norm[sym]==1)
+        {norm_count[sym]++;total_norm++;}
+      else
+      if(norm_count[sym]!=1)
+        {norm_count[sym]--;total_norm--;}
+
+    }
+    printf("state->%ld symbol->%ld nBits->%ld nextState->%ld newState->%ld \n", i, sym, nBits, nextState, newState);
+    
+  }
+
+  norm_count[max]+=(tableSize-total_norm);
+  total_norm+=(tableSize-total_norm);
+
+  for(i=0;i<tableSize;i++)
+  {
+    unsigned sym=tableSymbol[i];
+    
+    unsigned nextState= temp_norm[sym]++;
+    unsigned nBits = (unsigned)(tableLog - log2(nextState)+1);
+    if(nBits>tableLog)
+      nBits=tableLog;
+    //if(i==357)
+    //  decode_table[i].nBits--;
+    unsigned newState=(unsigned)((nextState<< nBits) - tableSize);
+printf("state->%ld symbol->%ld nBits->%ld nextState->%ld newState->%ld \n", i, sym, nBits, nextState, newState);
+    
+  }
+  
+
+ /*for(i=0;i<256;i++)
+    	{
+        total_norm+=norm_count[i];
+      }*/
+   // printf("\n M=%ld N=%ld", total_norm,total);
+
+
+// we build the table. The table is an arrya of struct.Each symbol has 3 fields
+ //minBits, minState-> if the state value is higher than this, use minBits+1
+ // dstate gives the change in state after encoding
+
+ /* Build table */
+unsigned tableU16[4200];
+ 
+    {   long u; for (u=0; u<tableSize; u++) {
+        long s = tableSymbol[u];   /* note : static analyzer may not understand tableSymbol is properly initialized */
+        tableU16[cumul[s]++] = (unsigned) (tableSize+u);   /* TableU16 : sorted by symbol order; gives next state value */
+    }   }
 
 struct symbolTransform symbolTT[maxValue];
 long maxBitsOut,minStatePlus;
@@ -446,41 +572,194 @@ for(i=0;i<255;i++)
 	switch(norm_count[i])
 	{
 		case 0:
-		symbolTT[i].dnBits=(tableLog+1)*pow(2,16)-pow(2,tableLog);
+		//symbolTT[i].dnBits=(tableLog+1)*pow(2,16)-pow(2,tableLog);
 		symbolTT[i].dstate=0;
 		break;
-
+		//case -1:
 		case 1:
-		symbolTT[i].dnBits=(tableLog+1)*pow(2,16)-pow(2,tableLog);
+		symbolTT[i].dBits=(tableLog<<16) - (1<< (tableLog-1));
+		//symbolTT[i].minStat=pow(2,tableLog);
 		symbolTT[i].dstate=total-1;
+		//printf("\n symbol=%ld  dstate=%ld dBits=%ld",i,symbolTT[i].dstate, symbolTT[i].dBits);
+	//	if(i==20){
+     
+
+      //printf("symbol= %ld",i);
+      //int s;
+      //for(s=0;s<2048;s++)
+      //printf("%ld->%ld ", s,(symbolTT[i].minBits+s))>>16;
+	//	}
 		total++;
 		break;
 
-		default:
-		maxBitsOut = (long)(tableLog - log(norm_count[i]-1));
-        minStatePlus = (long)(norm_count[i]*pow(2, maxBitsOut));
-        symbolTT[i].dnBits = (maxBitsOut *pow(2, 16)) - minStatePlus;
+		default: ;
+		unsigned maxBits = (long)(tableLog - (long)log2(norm_count[i]-1));
+    //if(maxBits>tableLog) maxBits=tableLog;
+        unsigned minStatePlus = (long)(norm_count[i]<< (maxBits));
+        //symbolTT[i].dnBits = (maxBitsOut *pow(2, 16)) - minStatePlus;
         symbolTT[i].dstate = total - norm_count[i];
+        symbolTT[i].dBits= (maxBits << 16) - minStatePlus;
         total +=  norm_count[i];
-
+        printf("\n symbol=%ld maxBitsOut=%ld minState=%ld dstate=%ld dBits=%ld",i,maxBits, minStatePlus,symbolTT[i].dstate, symbolTT[i].dBits);
+       /* if(i==92)
+    {
+    */  
+   /* }*/
 
 	}
+	//if(norm_count[i])
+	//printf("\n symbol=%ld minBitsOut=%ld minStatePlus=%ld dstate=%ld",i,symbolTT[i].minBits,symbolTT[i].minStatePlus, symbolTT[i].dstate);
 }
 
-printf("\n symbol transformation\n");
+/*int s;
+      for(s=1;s<2048;s++)
+      printf("%ld->%ld \n",s,(long)log2(s));*/
+
+//printf("k=%ld \n",k);
+struct symbolTransform symbolT;
+unsigned stateValue=tableSize;
+unsigned nBitsOut;
+unsigned out_buff[nx*ny];
+
+
+for(i=k-1;i>=0;i--)
+{
+	symbolT=symbolTT[in_buff[i]];
+	//nBitsOut=stateValue<symbolT.minStatePlus?symbolT.minBits:symbolT.minBits+1;
+	if(i<nx*ny-1)
+		out_buff[i]=stateValue;
+	nBitsOut = (unsigned)(stateValue+symbolT.dBits) >> 16;
+	
+
+	//printf("i=%ld symbol=%ld %ld,%ld \n",i,in_buff[i],stateValue,nBitsOut );
+	//encode state value push bits(state value)
+	//write_long_bitwise(stateValue,nBitsOut,output_file);
+	
+	stateValue= tableU16[(long)((stateValue>>(nBitsOut))+symbolT.dstate)];
+	if(i>=nx*ny-500)
+	{printf("k=%ld symbol=%ld %ld,%ld \n",i,in_buff[i],stateValue,nBitsOut );}
+
+}
+out_buff[nx*ny-1]=stateValue;
+*finalState=stateValue;
+
+for(i=nx*ny-1;i>=0;i--)
+	{
+		
+		symbolT=symbolTT[in_buff[nx*ny-1-i]];
+		nBitsOut = (unsigned)(out_buff[nx*ny-1-i]+symbolT.dBits) >> 16;
+		write_long_bitwise(out_buff[nx*ny-1-i],nBitsOut,output_file);
+		
+		//if(i>nx*ny-1-300)
+			//printf("i=%ld symbol=%ld %ld,%ld \n",nx*ny-1-i, in_buff[nx*ny-1-i], out_buff[nx*ny-1-i],nBitsOut);
+	}
+
+/*printf("\n symbol transformation\n");
     for (i=0; i<maxValue; i++)
     	printf("%ld->%ld,%ld \n", i,symbolTT[i].dstate,symbolTT[i].dnBits);
+*/
+// start encoding from the last symbol and go to the first symbol , but first we have to
+//initialise state
 
- 
 
   
 }
+
 
 
 /*--------------------------------------------------------------------------*/
-void decompress_image(FILE* input_file, char* output_filename) {
+void decompress_image(FILE* input_file, char* output_filename, unsigned* norm_count, unsigned initialState, long nx, long ny)
+{
+	
+
+	// first step in decoding is building the decoding table. For now, we assume we have the norm_count values
+	// but later we have to write it in the file and read from it.
+
+	//first spread the symbols
+
+	long tableLog=11;
+	long tableSize=pow(2,tableLog);
+	long out_buff[nx*ny];
+	struct decode_symbol
+	{
+		unsigned newState;
+		unsigned symbol;
+		unsigned nBits;
+	} decode_table[tableSize];
+
+	long pos=0;
+	long step=(tableSize/2)+(tableSize/8)+3;
+	long *tableSymbol;
+	alloc_vector_int(&tableSymbol,tableSize);
+	unsigned i,j;
+	for(i=0;i<256;i++) //iterating over symbols
+	{
+		for(j=0;j<norm_count[i];j++)  //iterating for the number of normalized occurences
+		{
+			decode_table[pos].symbol=i;
+			pos=(pos+step)%tableSize;
+		}
+	}
+
+	//build decoding table
+
+	for(i=0;i<tableSize;i++)
+	{
+		unsigned sym=decode_table[i].symbol;
+		unsigned nextState= norm_count[sym]++;
+		decode_table[i].nBits = (unsigned)(tableLog - (long)log2(nextState));
+		if(decode_table[i].nBits>tableLog)
+      decode_table[i].nBits=tableLog;
+    
+		decode_table[i].newState=(unsigned)((nextState<< decode_table[i].nBits) - tableSize);
+    if(decode_table[i].newState==tableSize)
+      {decode_table[i].newState=(unsigned)(((nextState-1)<< decode_table[i].nBits) - tableSize); }
+		//printf("state->%ld symbol->%ld nBits->%ld nextState->%ld newState->%ld \n", i, decode_table[i].symbol, decode_table[i].nBits, nextState, decode_table[i].newState);
+		
+	}
+
+	unsigned stateValue=initialState-tableSize;
+	//printf("%ld \n", stateValue);
+	struct decode_symbol stateInfo;
+	long nextBits;
+	long k;
+	for(k=0;k<nx*ny;k++)
+	{
+			stateInfo=decode_table[stateValue];
+		out_buff[k]=stateInfo.symbol;
+
+    if(k>=nx*ny-500)
+    printf("%ld->%ld %ld %ld",k,out_buff[k], stateValue,stateInfo.nBits );
+		nextBits=get_bits(input_file,stateInfo.nBits);
+		
+		stateValue=(stateInfo.newState + nextBits) ;
+		 
+
+	}
+
+	long** image;
+	alloc_matrix (&image, nx+2, ny+2);
   
+  	for (i=1;i<=nx;i++) {
+    	for (j=1;j<=ny;j++) {
+      image[i][j]=(long)out_buff[(i-1)+(j-1)*nx];
+      
+    }
+  }
+
+  //entropy(image,nx,ny);
+
+  
+  write_pgm(image,nx,ny,output_filename,0);
+
+
+	// */
+
+
+
 }
+  
+
   
 /*--------------------------------------------------------------------------*/
 
@@ -493,9 +772,13 @@ int main(int argc, char** args) {
   char* compressed_filename=0;
   char* output_filename=0;
 
-  FILE* input_file=0;
-  FILE* output_file=0;
+  //FILE* input_file=0;
+  //FILE* output_file=0;
   long q=256;
+
+  BFILE* output_file=0;
+
+  BFILE* input_file=0;
 
 
 
@@ -526,16 +809,21 @@ int main(int argc, char** args) {
   }
 
   /*input_file = fopen(input_filename, "rb");*/
-  
-  output_file = fopen(compressed_filename, "wb");
-  compress_image(input_filename,output_file,q);
-  
+   
+  unsigned finalState;
+  unsigned norm_count[256];
+  long tableSymbol[2048];
+  output_file = bfopen(compressed_filename, "w");
+  compress_image(input_filename,output_file,q,norm_count,&finalState);
+  //write_long_bitwise(2693,4,output_file);
   //fclose(input_file);
-  fclose(output_file);
+  bfclose(output_file);
+  long nx=768, ny=512;
+  input_file = bfopen(compressed_filename, "r");
+  decompress_image(input_file,output_filename, norm_count,finalState,nx,ny);
+  bfclose(input_file);
 
-/*  input_file = fopen(compressed_filename, "rb");
-  decompress_image(input_file,output_filename);
-  fclose(input_file);
-  */
+
+  
   return 0;
 }
