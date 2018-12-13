@@ -345,7 +345,7 @@ void write_long_bitwise(long c, /* (positive) number to write */
 
 
 /*--------------------------------------------------------------------------*/
-void compress_image(char* input_filename, BFILE* output_file, long q, unsigned* norm_count, unsigned* finalState) {
+void compress_image(char* input_filename, BFILE* output_file, long q, unsigned* norm_count, unsigned* finalState,long* nx_r,long* ny_r) {
 
 long *qmap_small = 0;
 long *qmap = 0;
@@ -360,7 +360,7 @@ long* in_buff;
 
   /* read image into buffer */
 read_pgm_and_allocate_memory(input_filename, &nx, &ny, &image);
-
+*nx_r=nx;*ny_r=ny;
   /* quantise if desired */
   if (q < 256) {
     alloc_matrix (&quantised, nx+2, ny+2);
@@ -410,12 +410,16 @@ for(i=0;i<maxValue;i++)
 	
 	
 	t=((double)count[i]/(double)total)*(double)tableSize;
-	norm_count[i]=(fabs(t-floor(t)<0.5))?(long)floor(t):(long)ceil(t);
+	norm_count[i]=(long)floor(t);//(fabs(t-floor(t)<0.5))?(long)floor(t):(long)ceil(t);
+  if(norm_count[i]==0)
+    norm_count[i]=1;
 	total_norm+=norm_count[i];
 	if(norm_count[i]>norm_count[max])
 		max=i;
 
 }
+
+printf("%ld %ld \n", norm_count[max],total_norm);
 /*norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
 
 total_norm=0;
@@ -445,8 +449,28 @@ total_norm-=10;*/
 
 ///////////////////////////////////
 
-norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
-
+int flag=0;
+if(tableSize-total_norm>0)
+  norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
+else
+{
+  while(1)
+  {
+    for(i=0;i<256;i++)
+    {
+      if(norm_count[i]>1)
+        {
+          norm_count[i]--;
+          total_norm--;
+          printf("%ld \n",total_norm-tableSize );
+          if(total_norm-tableSize==0)
+            {flag=1;break;}
+        }
+    }
+    if(flag)
+      break;
+  }
+}
 total_norm=0;
 for(i=0;i<maxValue;i++)
 {
@@ -779,7 +803,7 @@ int main(int argc, char** args) {
   BFILE* output_file=0;
 
   BFILE* input_file=0;
-
+long nx,ny;
 
 
   /* process input parameters */
@@ -814,11 +838,11 @@ int main(int argc, char** args) {
   unsigned norm_count[256];
   long tableSymbol[2048];
   output_file = bfopen(compressed_filename, "w");
-  compress_image(input_filename,output_file,q,norm_count,&finalState);
+  compress_image(input_filename,output_file,q,norm_count,&finalState,&nx,&ny);
   //write_long_bitwise(2693,4,output_file);
   //fclose(input_file);
   bfclose(output_file);
-  long nx=768, ny=512;
+  
   input_file = bfopen(compressed_filename, "r");
   decompress_image(input_file,output_filename, norm_count,finalState,nx,ny);
   bfclose(input_file);
