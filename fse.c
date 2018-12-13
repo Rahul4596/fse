@@ -392,9 +392,13 @@ read_pgm_and_allocate_memory(input_filename, &nx, &ny, &image);
 
 
 long *count,total=0,total_norm=0,max=0,tableSize=2048,maxValue=256,tableLog=log2(tableSize);
-alloc_vector_int(&count,256);
+
+
+alloc_vector_int(&count,256); // must change if to use for runlengths
+
+
 unsigned temp_norm[maxValue];
-//alloc_vector_int(&norm_count,256);
+
 for(i=0;i<maxValue;i++)
 	count[i]=0;
 for(i=0;i<srcSize;i++)
@@ -456,7 +460,7 @@ else
 {
   while(1)
   {
-    for(i=0;i<256;i++)
+    for(i=0;i<maxValue;i++)
     {
       if(norm_count[i]>1)
         {
@@ -515,7 +519,7 @@ long step, pos=0;
 step=(tableSize/2)+(tableSize/8)+3;
 long *tableSymbol;
 alloc_vector_int(&tableSymbol,tableSize);
-for(i=0;i<256;i++) //iterating over symbols
+for(i=0;i<maxValue;i++) //iterating over symbols
 {
 	for(j=0;j<norm_count[i];j++)  //iterating for the number of normalized occurences
 	{
@@ -591,7 +595,7 @@ unsigned tableU16[4200];
 struct symbolTransform symbolTT[maxValue];
 long maxBitsOut,minStatePlus;
 total=0;
-for(i=0;i<255;i++)
+for(i=0;i<maxValue;i++)
 {
 	switch(norm_count[i])
 	{
