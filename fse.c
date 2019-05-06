@@ -317,8 +317,19 @@ struct symbolTransform
 {
 	unsigned dstate;
 	unsigned dBits;
+ 
 };
 
+unsigned mylog2(long x)
+{
+  unsigned n=0;
+  while(x)
+  {
+    x=x>>1;
+    n++;
+  }
+  return n-1;
+}
 
 /*--------------------------------------------------------------------------*/
 void write_long_bitwise(long c, /* (positive) number to write */
@@ -423,7 +434,7 @@ for(i=0;i<maxValue;i++)
 
 }
 
-printf("%ld %ld \n", norm_count[max],total_norm);
+//printf("%ld %ld \n", norm_count[max],total_norm);
 /*norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
 
 total_norm=0;
@@ -466,7 +477,7 @@ else
         {
           norm_count[i]--;
           total_norm--;
-          printf("%ld \n",total_norm-tableSize );
+          //printf("%ld \n",total_norm-tableSize );
           if(total_norm-tableSize==0)
             {flag=1;break;}
         }
@@ -479,7 +490,7 @@ total_norm=0;
 for(i=0;i<maxValue;i++)
 {
   if(count[i])
-  printf("\n %ld -> %ld ", count[i], norm_count[i]);
+  //printf("\n %ld -> %ld ", count[i], norm_count[i]);
   temp_norm[i]=norm_count[i];
   total_norm+=norm_count[i];
 }
@@ -606,7 +617,9 @@ for(i=0;i<maxValue;i++)
 		//case -1:
 		case 1:
 		symbolTT[i].dBits=(tableLog<<16) - (1<< (tableLog-1));
-		//symbolTT[i].minStat=pow(2,tableLog);
+		//symbolTT[i].maxBitsOut
+
+    //symbolTT[i].minStat=pow(2,tableLog);
 		symbolTT[i].dstate=total-1;
 		//printf("\n symbol=%ld  dstate=%ld dBits=%ld",i,symbolTT[i].dstate, symbolTT[i].dBits);
 	//	if(i==20){
@@ -628,7 +641,7 @@ for(i=0;i<maxValue;i++)
         symbolTT[i].dstate = total - norm_count[i];
         symbolTT[i].dBits= (maxBits << 16) - minStatePlus;
         total +=  norm_count[i];
-        printf("\n symbol=%ld maxBitsOut=%ld minState=%ld dstate=%ld dBits=%ld",i,maxBits, minStatePlus,symbolTT[i].dstate, symbolTT[i].dBits);
+        //printf("\n symbol=%ld maxBitsOut=%ld minState=%ld dstate=%ld dBits=%ld",i,maxBits, minStatePlus,symbolTT[i].dstate, symbolTT[i].dBits);
        /* if(i==92)
     {
     */  
@@ -664,11 +677,11 @@ for(i=k-1;i>=0;i--)
 	//write_long_bitwise(stateValue,nBitsOut,output_file);
 	
 	stateValue= tableU16[(long)((stateValue>>(nBitsOut))+symbolT.dstate)];
-	if(i>=nx*ny-500)
-	{printf("k=%ld symbol=%ld %ld,%ld \n",i,in_buff[i],stateValue,nBitsOut );}
+	//if(i>=nx*ny-500)
+	//{printf("k=%ld symbol=%ld %ld,%ld \n",i,in_buff[i],stateValue,nBitsOut );}
 
 }
-out_buff[nx*ny-1]=stateValue;
+//out_buff[nx*ny-1]=stateValue;
 *finalState=stateValue;
 
 for(i=nx*ny-1;i>=0;i--)
@@ -735,7 +748,7 @@ void decompress_image(FILE* input_file, char* output_filename, unsigned* norm_co
 	{
 		unsigned sym=decode_table[i].symbol;
 		unsigned nextState= norm_count[sym]++;
-		decode_table[i].nBits = (unsigned)(tableLog - (long)log2(nextState));
+		decode_table[i].nBits = (unsigned)(tableLog - mylog2(nextState));
 		if(decode_table[i].nBits>tableLog)
       decode_table[i].nBits=tableLog;
     
@@ -756,8 +769,8 @@ void decompress_image(FILE* input_file, char* output_filename, unsigned* norm_co
 			stateInfo=decode_table[stateValue];
 		out_buff[k]=stateInfo.symbol;
 
-    if(k>=nx*ny-500)
-    printf("%ld->%ld %ld %ld",k,out_buff[k], stateValue,stateInfo.nBits );
+    //if(k>=nx*ny-500)
+    //printf("%ld->%ld %ld %ld",k,out_buff[k], stateValue,stateInfo.nBits );
 		nextBits=get_bits(input_file,stateInfo.nBits);
 		
 		stateValue=(stateInfo.newState + nextBits) ;
@@ -808,6 +821,8 @@ int main(int argc, char** args) {
 
   BFILE* input_file=0;
 long nx,ny;
+clock_t start,end;
+double cpu_time;
 
 
   /* process input parameters */
@@ -841,17 +856,25 @@ long nx,ny;
   unsigned finalState;
   unsigned norm_count[256];
   long tableSymbol[2048];
+  start=clock();
   output_file = bfopen(compressed_filename, "w");
   compress_image(input_filename,output_file,q,norm_count,&finalState,&nx,&ny);
   //write_long_bitwise(2693,4,output_file);
   //fclose(input_file);
   bfclose(output_file);
-  
+  end=clock();
+  cpu_time=(end-start)/CLOCKS_PER_SEC;
+  printf("\n time to compress: %f", cpu_time);
+
+  start=clock();
   input_file = bfopen(compressed_filename, "r");
   decompress_image(input_file,output_filename, norm_count,finalState,nx,ny);
   bfclose(input_file);
+  end=clock();
+  cpu_time=(end-start)/CLOCKS_PER_SEC;
+  printf("\n time to decompress: %f", cpu_time);
 
-
+  
   
   return 0;
 }
