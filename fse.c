@@ -353,10 +353,187 @@ void write_long_bitwise(long c, /* (positive) number to write */
 
 /*--------------------------------------------------------------------------*/
 
+typedef struct _BITBUFFER {
+  unsigned char *b; /* array for bytewise content */
+  long max_size;    /* maximum size of the buffer (determined by allocation) */
+  long byte_pos;    /* current byte position */
+  long bit_pos;     /* current bit position (inside current byte) */
+} BITBUFFER;
 
+void alloc_bitbuffer
+
+  (BITBUFFER *buffer, /* bitbuffer */
+   long n)            /* size */
+
+/* allocates memory for a bitbuffer of size n */
+{
+long i; /* loop variable */
+
+/* allocate array for individual bytes */
+buffer->b = (unsigned char *) malloc(n * sizeof(unsigned char));
+if (buffer->b == NULL)
+{
+   printf("alloc_bitbuffer: not enough memory available\n");
+   exit(1);
+}
+
+/* set max size, positions, and initialise all bytes with 0 */
+buffer->max_size = n;
+for (i = 0; i < buffer->max_size; i++)
+{
+   buffer->b[i] = 0;
+}
+buffer->byte_pos = 0;
+buffer->bit_pos = 0;
+return;
+} /* alloc_bitbuffer */
 
 /*--------------------------------------------------------------------------*/
-void compress_image(char* input_filename, BFILE* output_file, long q, unsigned* norm_count, unsigned* finalState,long* nx_r,long* ny_r) {
+
+long bitbuffer_addbit
+
+  (BITBUFFER *buffer,  /* bitbuffer (output) */
+   unsigned char bit)  /* bit to be written */
+
+/* Add a single bit to the buffer at the current bit position.
+ * Returns 1 on success, 0 if the buffer is full
+ */
+{
+if ((buffer->byte_pos < buffer->max_size) && (buffer->bit_pos < 8))
+{
+   if (bit)
+      buffer->b[buffer->byte_pos] |= (1 << buffer->bit_pos);
+   else
+      buffer->b[buffer->byte_pos] &= ~(1 << buffer->bit_pos);
+   (buffer->bit_pos)++;
+   if (buffer->bit_pos > 7)
+   {
+      buffer->bit_pos = 0;
+      buffer->byte_pos++;
+   }
+   return 1;
+}
+return 0; /* adding not successful, memory full */
+} /* bitbuffer_addbit */
+
+/*--------------------------------------------------------------------------*/
+
+long bitbuffer_getbit
+
+  (BITBUFFER *buffer)  /* bitbuffer (output) */
+
+/* Get a single bit from the buffer at the current bit position and
+ * move the position one bit further.
+ * Returns the bit on success, -1 on failure.
+ */
+{
+unsigned char bit;
+
+if ((buffer->byte_pos < buffer->max_size) && (buffer->bit_pos < 8))
+{
+   bit = (buffer->b[buffer->byte_pos] >> buffer->bit_pos) & 1;
+   (buffer->bit_pos)++;
+   if (buffer->bit_pos > 7)
+   {
+      buffer->bit_pos = 0;
+      buffer->byte_pos++;
+   }
+   return bit;
+}
+else
+{
+   return -1; /* end of buffer already reached, no more bits to read */
+}
+} /* bitbuffer_getbit */
+
+/*--------------------------------------------------------------------------*/
+
+void bitbuffer_writefile
+
+  (BITBUFFER *buffer, /* buffer to be written */
+   FILE *bitfile)     /* output file (should be open for writing) */
+
+/* Write full bitbuffer to file in a single disk operation. */
+{
+fwrite(buffer->b, sizeof(unsigned char), buffer->byte_pos + 1, bitfile);
+} /* bitbuffer_writefile */
+
+/*--------------------------------------------------------------------------*/
+
+void bitbuffer_loadfile
+
+  (BITBUFFER *buffer, /* output buffer*/
+   FILE *bitfile)     /* input file (should be open for reading "rb") */
+
+/* Load file content from current position until end into bitbuffer. */
+{
+long start_pos; /* initial position of file pointer */
+long chunksize; /* size of file chunk to read */
+
+
+start_pos = ftell(bitfile);
+fseek(bitfile, 0, SEEK_END);
+chunksize = ftell(bitfile)-start_pos;
+fseek(bitfile, start_pos, SEEK_SET);
+
+/*printf("allocating buffer of size %ld\n",chunksize);*/
+alloc_bitbuffer(buffer,chunksize);
+
+/*printf("start reading at position %ld, write to %ld",
+   start_pos,buffer->byte_pos); */
+
+fread(buffer->b, 1, chunksize, bitfile);
+/*printf("%ld bytes loaded\n",chunksize);*/
+
+} /* bitbuffer_loadfile */
+
+
+void write_long_bitwise_2(long c, /* (positive) number to write */
+                        long n, /* number of bits */
+                        BITBUFFER *buffer) /* 0 no output,
+                                               otherwise write to binary file */
+{
+  
+  
+ //printf("writing->%ld with %ld bits \n",c,n );
+  while(n>0)
+  {
+    /*set_bit(output_file,(c>>(n-1))&1);
+    printf("b=%ld  " , (c>>(n-1))&1);
+    n--;*/
+    bitbuffer_addbit(buffer,(char)c%2);
+    
+    c/=2;
+    n--;
+  }
+  return;
+}
+
+long read_long_bitwise_2(BITBUFFER *buffer, /* (positive) number to write */
+                        long n /* number of bits */
+                        ) /* 0 no output,
+                                               otherwise write to binary file */
+{
+  
+  long temp,i,p=0,b=0;
+ //printf("writing->%ld with %ld bits \n",c,n );
+  for(i=0;i<n;i++)
+  {
+    temp=bitbuffer_getbit(buffer);
+    b+=temp<<(p++);
+    //p=p<<1;
+    
+  }
+    /*set_bit(output_file,(c>>(n-1))&1);
+    printf("b=%ld  " , (c>>(n-1))&1);
+    n--;*/
+    
+  
+  return b;
+}
+
+/*--------------------------------------------------------------------------*/
+void compress_image(char* input_filename, FILE* output_file, long q, unsigned* norm_count, unsigned* finalState,long* nx_r,long* ny_r) {
 
 long *qmap_small = 0;
 long *qmap = 0;
@@ -497,7 +674,7 @@ for(i=0;i<maxValue;i++)
 
 ///////////////////////////////////////////////////////////
 
-printf("\n M=%ld N=%ld", total_norm,total);
+//printf("\n M=%ld N=%ld", total_norm,total);
 
 //************building the table****************
 
@@ -661,7 +838,9 @@ struct symbolTransform symbolT;
 unsigned stateValue=tableSize;
 unsigned nBitsOut;
 unsigned out_buff[nx*ny];
+BITBUFFER buffer;
 
+alloc_bitbuffer(&buffer,nx*ny*8);
 
 for(i=k-1;i>=0;i--)
 {
@@ -689,12 +868,13 @@ for(i=nx*ny-1;i>=0;i--)
 		
 		symbolT=symbolTT[in_buff[nx*ny-1-i]];
 		nBitsOut = (unsigned)(out_buff[nx*ny-1-i]+symbolT.dBits) >> 16;
-		write_long_bitwise(out_buff[nx*ny-1-i],nBitsOut,output_file);
+		write_long_bitwise_2(out_buff[nx*ny-1-i],nBitsOut,&buffer);
+
 		
 		//if(i>nx*ny-1-300)
 			//printf("i=%ld symbol=%ld %ld,%ld \n",nx*ny-1-i, in_buff[nx*ny-1-i], out_buff[nx*ny-1-i],nBitsOut);
 	}
-
+  bitbuffer_writefile(&buffer,output_file);
 /*printf("\n symbol transformation\n");
     for (i=0; i<maxValue; i++)
     	printf("%ld->%ld,%ld \n", i,symbolTT[i].dstate,symbolTT[i].dnBits);
@@ -718,6 +898,9 @@ void decompress_image(FILE* input_file, char* output_filename, unsigned* norm_co
 
 	//first spread the symbols
 
+  clock_t t=clock();
+
+
 	long tableLog=11;
 	long tableSize=pow(2,tableLog);
 	long out_buff[nx*ny];
@@ -733,12 +916,17 @@ void decompress_image(FILE* input_file, char* output_filename, unsigned* norm_co
 	long *tableSymbol;
 	alloc_vector_int(&tableSymbol,tableSize);
 	unsigned i,j;
+
+  BITBUFFER buffer;
+  alloc_bitbuffer(&buffer,8*nx*ny);
+
+  bitbuffer_loadfile(&buffer, input_file);
 	for(i=0;i<256;i++) //iterating over symbols
 	{
 		for(j=0;j<norm_count[i];j++)  //iterating for the number of normalized occurences
 		{
 			decode_table[pos].symbol=i;
-			pos=(pos+step)%tableSize;
+			pos=(pos+step)&(tableSize-1);
 		}
 	}
 
@@ -771,12 +959,17 @@ void decompress_image(FILE* input_file, char* output_filename, unsigned* norm_co
 
     //if(k>=nx*ny-500)
     //printf("%ld->%ld %ld %ld",k,out_buff[k], stateValue,stateInfo.nBits );
-		nextBits=get_bits(input_file,stateInfo.nBits);
+		nextBits=read_long_bitwise_2(&buffer,stateInfo.nBits);
 		
 		stateValue=(stateInfo.newState + nextBits) ;
 		 
 
 	}
+
+  t=clock()-t;
+  double cpu_time=((double)t)/CLOCKS_PER_SEC;
+  printf("\n time to decompress: %f", cpu_time);
+
 
 	long** image;
 	alloc_matrix (&image, nx+2, ny+2);
@@ -817,12 +1010,12 @@ int main(int argc, char** args) {
   //FILE* output_file=0;
   long q=256;
 
-  BFILE* output_file=0;
+  FILE* output_file=0;
 
-  BFILE* input_file=0;
+  FILE* input_file=0;
 long nx,ny;
-clock_t start,end;
-double cpu_time;
+
+//double cpu_time;
 
 
   /* process input parameters */
@@ -856,23 +1049,21 @@ double cpu_time;
   unsigned finalState;
   unsigned norm_count[256];
   long tableSymbol[2048];
-  start=clock();
-  output_file = bfopen(compressed_filename, "w");
+  //t=clock();
+  output_file = fopen(compressed_filename, "w");
   compress_image(input_filename,output_file,q,norm_count,&finalState,&nx,&ny);
   //write_long_bitwise(2693,4,output_file);
   //fclose(input_file);
-  bfclose(output_file);
-  end=clock();
-  cpu_time=(end-start)/CLOCKS_PER_SEC;
-  printf("\n time to compress: %f", cpu_time);
+  fclose(output_file);
+  //t=clock()-t;
+  //double cpu_time=((double)t)/CLOCKS_PER_SEC;
+  //printf("\n time to compress: %f", cpu_time);
 
-  start=clock();
-  input_file = bfopen(compressed_filename, "r");
+  
+  input_file = fopen(compressed_filename, "r");
   decompress_image(input_file,output_filename, norm_count,finalState,nx,ny);
-  bfclose(input_file);
-  end=clock();
-  cpu_time=(end-start)/CLOCKS_PER_SEC;
-  printf("\n time to decompress: %f", cpu_time);
+  fclose(input_file);
+  
 
   
   
