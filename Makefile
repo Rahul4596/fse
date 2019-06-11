@@ -9,7 +9,7 @@ OBJECTS=lib/bfio.o \
 all: fse
 
 fse: fse.c 
-	$(GPP) $(CCFLAGS) $(OBJECTS) $^ -o $@ $(LDFLAGS)
+	$(GPP) -pg $(CCFLAGS) $(OBJECTS) $^ -o $@ $(LDFLAGS)
 
 clean: fse 
 	rm fse
